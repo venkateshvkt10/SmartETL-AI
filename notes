@@ -1,0 +1,3 @@
+cmd :- cd D:\New_project\SmartETL-AI
+env activate :- .\.venv\Scripts\Activate.ps1
+run local host :- streamlit run app.py
