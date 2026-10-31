@@ -1,89 +1,128 @@
+
 import streamlit as st
-import pandas as pd
+
 from modules.file_reader import read_uploaded_file
-from modules.cleaner import clean_dataframe
-from modules.validator import validate_dataframe
-from modules.report import build_summary
+from modules.profiler import profile_dataframe
 
-st.set_page_config(page_title="SmartETL AI", page_icon="🧹", layout="wide")
+st.set_page_config(
+    page_title="SmartETL AI",
+    page_icon="🧹",
+    layout="wide"
+)
+
 st.title("🧹 SmartETL AI")
-st.caption("Upload • Profile • Clean • Validate • Export")
+st.caption("Intelligent ETL and Data Quality Platform")
 
-with st.sidebar:
-    st.header("Cleaning options")
-    remove_duplicates = st.checkbox("Remove exact duplicate rows", value=True)
-    null_strategy = st.selectbox(
-        "Fill numeric null values with",
-        ["Do not fill", "Mean", "Median", "Zero"],
-    )
-    trim_text = st.checkbox("Trim leading/trailing spaces", value=True)
+st.sidebar.title("SmartETL Settings")
+st.sidebar.info("Phase 2: Upload & Data Profiling")
 
-uploaded = st.file_uploader("Upload a CSV, Excel or JSON file", type=["csv", "xlsx", "xls", "json"])
+MAX_FILE_SIZE_MB = 50
 
-if uploaded:
+uploaded_file = st.file_uploader(
+    "Upload your dataset",
+    type=["csv", "xlsx", "xls", "json"]
+)
+
+if uploaded_file:
+
+    if uploaded_file.size > MAX_FILE_SIZE_MB * 1024 * 1024:
+        st.error("File exceeds the 50 MB limit.")
+        st.stop()
+
     try:
-        df = read_uploaded_file(uploaded)
-        st.subheader("Source preview")
-        st.write(f"Rows: **{len(df):,}** · Columns: **{len(df.columns)}**")
-        st.dataframe(df.head(100), use_container_width=True)
 
-        if st.button("Run ETL", type="primary"):
-            cleaned, cleaning_stats = clean_dataframe(
-                df,
-                remove_duplicates=remove_duplicates,
-                null_strategy=null_strategy,
-                trim_text=trim_text,
-            )
-            errors = validate_dataframe(cleaned)
-            summary = build_summary(df, cleaned, cleaning_stats, errors)
+        df = read_uploaded_file(uploaded_file)
 
-            st.session_state["cleaned"] = cleaned
-            st.session_state["errors"] = errors
-            st.session_state["summary"] = summary
-            st.success("ETL run completed.")
+        if df.empty:
+            st.warning("Uploaded file contains no records.")
+            st.stop()
 
-    except Exception as exc:
-        st.error(f"Unable to read this file: {exc}")
+        if df.columns.duplicated().any():
+            st.error("Duplicate column names detected.")
+            st.stop()
 
-if "cleaned" in st.session_state:
-    cleaned = st.session_state["cleaned"]
-    errors = st.session_state["errors"]
-    summary = st.session_state["summary"]
+        st.success("File uploaded successfully!")
 
-    st.subheader("ETL results")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Input rows", summary["input_rows"])
-    c2.metric("Output rows", summary["output_rows"])
-    c3.metric("Duplicates removed", summary["duplicates_removed"])
-    c4.metric("Validation issues", len(errors))
+        # 1. File information
+        st.subheader("1. File Information")
 
-    st.subheader("Cleaned data preview")
-    st.dataframe(cleaned.head(100), use_container_width=True)
+        col1, col2, col3 = st.columns(3)
 
-    st.subheader("Validation issues")
-    if errors.empty:
-        st.success("No validation issues found by the starter rules.")
-    else:
-        st.dataframe(errors, use_container_width=True)
-        st.download_button(
-            "Download validation report (CSV)",
-            errors.to_csv(index=False).encode("utf-8"),
-            file_name="validation_report.csv",
-            mime="text/csv",
+        col1.metric("File Name", uploaded_file.name)
+        col2.metric("Rows", f"{len(df):,}")
+        col3.metric("Columns", len(df.columns))
+
+        # 2. Data preview
+        st.subheader("2. Data Preview")
+
+        st.dataframe(
+            df.head(100),
+            use_container_width=True
         )
 
-    st.download_button(
-        "Download cleaned data (CSV)",
-        cleaned.to_csv(index=False).encode("utf-8"),
-        file_name="cleaned_data.csv",
-        mime="text/csv",
-    )
-    st.download_button(
-        "Download cleaned data (Excel)",
-        data=__import__("modules.exporter", fromlist=["to_excel_bytes"]).to_excel_bytes(cleaned),
-        file_name="cleaned_data.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+        # 3. Data profiling
+        st.subheader("3. Data Quality Profile")
 
-    st.subheader("Execution summary")
-    st.json(summary)
+        profile = profile_dataframe(df)
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        c1.metric(
+            "Total Records",
+            f"{profile['row_count']:,}"
+        )
+
+        c2.metric(
+            "Duplicate Rows",
+            f"{profile['duplicate_rows']:,}"
+        )
+
+        c3.metric(
+            "Missing Cells",
+            f"{profile['null_cells']:,}"
+        )
+
+        c4.metric(
+            "Completeness",
+            f"{profile['completeness']}%"
+        )
+
+        # 4. Column-level analysis
+        st.subheader("4. Column-Level Analysis")
+
+        st.dataframe(
+            profile["columns"],
+            use_container_width=True
+        )
+
+        # 5. Descriptive statistics
+        st.subheader("5. Descriptive Statistics")
+
+        with st.expander("View statistical analysis"):
+
+            st.dataframe(
+                df.describe(include="all").transpose(),
+                use_container_width=True
+            )
+
+        # 6. Null analysis
+        st.subheader("6. Missing Value Analysis")
+
+        null_summary = profile["columns"][
+            ["Column", "Null Count", "Null %"]
+        ]
+
+        st.dataframe(
+            null_summary,
+            use_container_width=True
+        )
+
+        st.success(
+            "Data profiling completed successfully!"
+        )
+
+    except Exception as error:
+
+        st.error(
+            f"Data processing failed: {str(error)}"
+        )
