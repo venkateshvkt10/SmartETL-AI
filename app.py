@@ -17,6 +17,7 @@ from modules.history import (
     load_etl_history,
     get_etl_history_summary
 )
+from modules.quality_report import generate_quality_report
 
 
 # --------------------------------------------------
@@ -625,15 +626,18 @@ elif selected_page in [
                             numeric_columns=numeric_columns,
                             date_columns=date_columns
                         )
-
+                            
                     st.session_state["pipeline_result"] = result
                     st.session_state["pipeline_source"] = file_hash
+                    
                     try:
                         save_etl_history(uploaded_file.name, result["summary"])
                         st.success("ETL execution history saved successfully!")
                     except Exception as history_error:
                         st.warning(f"Pipeline completed, but history could not be saved: {history_error}")
-            
+                    # Generate Data Quality Report
+                    quality_report = generate_quality_report(df, result)
+                    st.session_state["quality_report"] = quality_report
                     st.success(
                         "Complete ETL Pipeline executed successfully!"
                     )
@@ -702,7 +706,56 @@ elif selected_page in [
                     st.success(
                         f"Pipeline Status: {summary['pipeline_status']}"
                     )
+                    # DATA QUALITY ANALYSIS
 
+                    st.divider()
+                    st.header("🤖 Data Quality Analysis")
+
+                    quality_report = st.session_state.get("quality_report")
+
+                    if quality_report:
+
+                        col1, col2, col3, col4 = st.columns(4)
+
+                        col1.metric(
+                            "Quality Score",
+                            f"{quality_report['quality_score']}%"
+                        )
+
+                        col2.metric(
+                            "Quality Grade",
+                            quality_report["grade"]
+                        )
+
+                        col3.metric(
+                            "Completeness",
+                            f"{quality_report['completeness']}%"
+                        )
+
+                        col4.metric(
+                            "Validity",
+                            f"{quality_report['validity']}%"
+                        )
+
+                        st.progress(quality_report["quality_score"] / 100)
+
+                        st.subheader("Identified Issues")
+
+                        for issue in quality_report["issues"]:
+                            st.warning(issue)
+
+                        st.subheader("Recommendations")
+
+                        for recommendation in quality_report["recommendations"]:
+                            st.info(recommendation)
+
+                        st.download_button(
+                            "Download Data Quality Report",
+                            data=quality_report["report_text"],
+                            file_name="SmartETL_Data_Quality_Report.txt",
+                            mime="text/plain",
+                            key="quality_report_download"
+                        )
                     # CLEANING REPORT
 
                     st.subheader("5. Cleaning Report")
