@@ -18,6 +18,18 @@ from modules.history import (
     get_etl_history_summary
 )
 from modules.quality_report import generate_quality_report
+from modules.database import (
+    test_database_connection,
+    load_valid_records
+)
+from modules.database_import import (
+    create_database_engine,
+    test_import_connection,
+    get_database_schemas,
+    get_database_tables,
+    import_database_table,
+    import_sql_query
+)
 
 
 # --------------------------------------------------
@@ -47,6 +59,7 @@ selected_page = st.sidebar.radio(
         "Home",
         "Data Preparation",
         "Complete ETL Pipeline",
+        "Database Import",
         "ETL Dashboard"
     ]
 )
@@ -791,6 +804,97 @@ elif selected_page in [
                         valid_df.head(100),
                         use_container_width=True
                     )
+                
+                    # SQL SERVER DATABASE INTEGRATION
+
+                    st.divider()
+                    st.header("11. SQL Server Database Integration")
+
+                    st.write(
+                        "Test your SQL Server connection and load "
+                        "validated records into the SmartETL_AI database."
+                    )
+
+                    if st.button(
+                        "Test SQL Server Connection",
+                        key="test_sql_server_connection"
+                    ):
+                        try:
+                            database_name = test_database_connection()
+
+                            st.success(
+                                f"Connected successfully to database: {database_name}"
+                            )
+
+                        except Exception as error:
+                            st.error(f"Connection failed: {error}")
+
+
+                    if not valid_df.empty:
+
+                        st.info(
+                            f"{len(valid_df):,} validated records are ready for database loading."
+                        )
+
+                        if st.button(
+                            "Load Valid Records into SQL Server",
+                            type="primary",
+                            key="load_sql_server_records"
+                        ):
+
+                            try:
+                                with st.spinner("Loading records into SQL Server..."):
+
+                                    load_result = load_valid_records(
+                                        valid_df,
+                                        uploaded_file.name
+                                    )
+
+                                    st.session_state["sql_load_result"] = {
+                                        "source": file_hash,
+                                        **load_result
+                                    }
+
+                            except Exception as error:
+                                st.error(f"SQL Server load failed: {error}")
+
+
+                    # DISPLAY DATABASE LOAD RESULT
+
+                    sql_result = st.session_state.get("sql_load_result")
+
+                    if sql_result and sql_result.get("source") == file_hash:
+
+                        st.subheader("SQL Server Load Summary")
+
+                        db1, db2, db3 = st.columns(3)
+
+                        db1.metric(
+                            "Total Records",
+                            sql_result["total_records"]
+                        )
+
+                        db2.metric(
+                            "Successfully Loaded",
+                            sql_result["successful_records"]
+                        )
+
+                        db3.metric(
+                            "Failed Records",
+                            sql_result["failed_records"]
+                        )
+
+                        st.success(
+                            f"Database Load Status: {sql_result['status']}"
+                        )
+
+                        st.code(
+                            f"Batch ID: {sql_result['batch_id']}"
+                        )
+
+                    else:
+                        if valid_df.empty:
+                            st.warning("No valid records available for database loading.")
 
                     # REJECTED RECORDS
 
@@ -892,6 +996,251 @@ elif selected_page in [
             "Upload a CSV, Excel or JSON file to start."
         )
         
+# --------------------------------------------------
+# DATABASE IMPORT - SOURCE DATABASE CONNECTIVITY
+# --------------------------------------------------
+
+elif selected_page == "Database Import":
+
+    st.header("Database Import")
+    st.caption("Connect to a relational database, select a table or run a read-only SQL query, and import the result into SmartETL AI.")
+
+    st.info("Use a read-only database account where possible. Connection details are used for this Streamlit session and are not saved by this page.")
+
+    db_type = st.selectbox(
+        "Select Database",
+        ["SQL Server", "MySQL", "PostgreSQL", "SQLite"],
+        key="source_db_type"
+    )
+
+    with st.form("source_database_connection_form"):
+        if db_type == "SQLite":
+            sqlite_path = st.text_input(
+                "SQLite database file path",
+                placeholder=r"D:\Data\source_database.db"
+            )
+            host = port = database = username = password = None
+            windows_auth = False
+            driver = "ODBC Driver 18 for SQL Server"
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                host = st.text_input("Server / Host", value="localhost")
+                if db_type == "SQL Server":
+                    port = st.text_input("Port (optional)", placeholder="1433")
+                elif db_type == "MySQL":
+                    port = st.text_input("Port", value="3306")
+                else:
+                    port = st.text_input("Port", value="5432")
+                database = st.text_input("Database name")
+            with c2:
+                if db_type == "SQL Server":
+                    windows_auth = st.checkbox("Use Windows Authentication", value=True)
+                    driver = st.selectbox(
+                        "ODBC Driver",
+                        ["ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server"]
+                    )
+                else:
+                    windows_auth = False
+                    driver = "ODBC Driver 18 for SQL Server"
+                username = st.text_input("Username", disabled=windows_auth)
+                password = st.text_input("Password", type="password", disabled=windows_auth)
+            sqlite_path = None
+
+        connect_clicked = st.form_submit_button("Test Connection", type="primary")
+
+    if connect_clicked:
+        try:
+            engine = create_database_engine(
+                database_type=db_type,
+                host=host,
+                port=port,
+                database=database,
+                username=username,
+                password=password,
+                windows_auth=windows_auth,
+                driver=driver,
+                sqlite_path=sqlite_path,
+            )
+            test_import_connection(engine)
+            st.session_state["source_db_engine"] = engine
+            st.session_state["source_db_type_connected"] = db_type
+            st.session_state.pop("database_import_df", None)
+            st.session_state.pop("database_import_source", None)
+            st.success(f"Successfully connected to {db_type}.")
+        except Exception as error:
+            st.error(f"Database connection failed: {error}")
+
+    engine = st.session_state.get("source_db_engine")
+    connected_type = st.session_state.get("source_db_type_connected")
+
+    if engine is not None and connected_type == db_type:
+        st.divider()
+        st.subheader("Import Data")
+        import_method = st.radio(
+            "Choose import method",
+            ["Select a table", "Run a SQL query"],
+            horizontal=True,
+            key="database_import_method"
+        )
+        row_limit = st.number_input(
+            "Maximum rows to import",
+            min_value=1,
+            max_value=1000000,
+            value=100000,
+            step=10000
+        )
+
+        if import_method == "Select a table":
+            try:
+                schemas = get_database_schemas(engine)
+                if schemas and schemas != [None]:
+                    selected_schema = st.selectbox(
+                        "Select schema",
+                        schemas,
+                        format_func=lambda value: str(value),
+                        key="source_db_schema"
+                    )
+                else:
+                    selected_schema = None
+
+                tables = get_database_tables(engine, selected_schema)
+                if tables:
+                    selected_table = st.selectbox(
+                        "Select table",
+                        tables,
+                        key="source_db_table"
+                    )
+                    if st.button("Import Selected Table", type="primary"):
+                        imported_df, truncated = import_database_table(
+                            engine, selected_table, selected_schema, int(row_limit)
+                        )
+                        st.session_state["database_import_df"] = imported_df
+                        st.session_state["database_import_source"] = f"{db_type}: {selected_table}"
+                        st.session_state["database_import_truncated"] = truncated
+                else:
+                    st.warning("No tables were found in this database/schema.")
+            except Exception as error:
+                st.error(f"Could not retrieve database tables: {error}")
+
+        else:
+            sql_query = st.text_area(
+                "SQL SELECT query",
+                placeholder="SELECT TOP 100 * FROM dbo.Customers; -- SQL Server example\n-- Use LIMIT for MySQL/PostgreSQL/SQLite as appropriate",
+                height=160,
+                key="database_source_sql_query"
+            )
+            if st.button("Execute Query and Import", type="primary"):
+                try:
+                    imported_df, truncated = import_sql_query(
+                        engine, sql_query, int(row_limit)
+                    )
+                    st.session_state["database_import_df"] = imported_df
+                    st.session_state["database_import_source"] = f"{db_type}: SQL query"
+                    st.session_state["database_import_truncated"] = truncated
+                except Exception as error:
+                    st.error(f"Query import failed: {error}")
+
+        imported_df = st.session_state.get("database_import_df")
+        if imported_df is not None:
+            source_label = st.session_state.get("database_import_source", "Database source")
+            st.divider()
+            st.subheader("Imported Data Preview")
+            if st.session_state.get("database_import_truncated"):
+                st.warning(f"Preview/import was limited to {len(imported_df):,} rows. Increase the row limit if needed.")
+            st.success(f"Imported {len(imported_df):,} rows and {len(imported_df.columns):,} columns from {source_label}.")
+            st.dataframe(imported_df.head(100), use_container_width=True)
+
+            profile = profile_dataframe(imported_df)
+            p1, p2, p3, p4 = st.columns(4)
+            p1.metric("Rows", f"{profile['row_count']:,}")
+            p2.metric("Columns", profile["column_count"])
+            p3.metric("Duplicate Rows", f"{profile['duplicate_rows']:,}")
+            p4.metric("Completeness", f"{profile['completeness']}%")
+            with st.expander("View imported data column profile"):
+                st.dataframe(profile["columns"], use_container_width=True)
+
+            st.divider()
+            st.subheader("Run SmartETL AI Pipeline on Imported Data")
+            cols = imported_df.columns.tolist()
+            with st.form("database_import_etl_form"):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    db_remove_duplicates = st.checkbox("Remove duplicate rows", value=True, key="db_etl_dedupe")
+                with c2:
+                    db_trim_whitespace = st.checkbox("Trim whitespace", value=True, key="db_etl_trim")
+                with c3:
+                    db_fill_missing = st.checkbox("Fill missing values", value=False, key="db_etl_fill")
+                db_required = st.multiselect("Required columns", cols, key="db_etl_required")
+                db_unique = st.multiselect("Unique / primary key columns", cols, key="db_etl_unique")
+                db_email = st.multiselect("Email columns", cols, key="db_etl_email")
+                db_phone = st.multiselect("Phone columns", cols, key="db_etl_phone")
+                db_numeric = st.multiselect("Numeric columns", cols, key="db_etl_numeric")
+                db_dates = st.multiselect("Date columns", cols, key="db_etl_dates")
+                run_database_etl = st.form_submit_button("Run ETL on Imported Data", type="primary")
+
+            if run_database_etl:
+                try:
+                    with st.spinner("Running ETL on database records..."):
+                        result = run_etl_pipeline(
+                            imported_df,
+                            remove_duplicates=db_remove_duplicates,
+                            trim_whitespace=db_trim_whitespace,
+                            fill_missing=db_fill_missing,
+                            required_columns=db_required,
+                            unique_columns=db_unique,
+                            email_columns=db_email,
+                            phone_columns=db_phone,
+                            numeric_columns=db_numeric,
+                            date_columns=db_dates,
+                        )
+                    st.session_state["database_import_etl_result"] = result
+                    st.session_state["database_import_etl_source"] = source_label
+                    st.session_state["database_import_quality_report"] = generate_quality_report(imported_df, result)
+                    try:
+                        save_etl_history(source_label, result["summary"])
+                    except Exception as history_error:
+                        st.warning(f"ETL completed, but execution history could not be saved: {history_error}")
+                    st.success("ETL completed successfully for the imported database data.")
+                except Exception as error:
+                    st.error(f"Database ETL failed: {error}")
+
+            db_result = st.session_state.get("database_import_etl_result")
+            if db_result is not None and st.session_state.get("database_import_etl_source") == source_label:
+                db_summary = db_result["summary"]
+                st.subheader("Database ETL Results")
+                r1, r2, r3, r4 = st.columns(4)
+                r1.metric("Input Rows", db_summary["total_input_rows"])
+                r2.metric("Valid Records", db_summary["valid_records"])
+                r3.metric("Rejected Records", db_summary["rejected_records"])
+                r4.metric("Execution Time", f"{db_summary['execution_time_seconds']} sec")
+                st.subheader("Valid Records")
+                st.dataframe(db_result["valid_df"].head(100), use_container_width=True)
+                st.subheader("Rejected Records")
+                st.dataframe(db_result["rejected_df"].head(100), use_container_width=True)
+                st.download_button(
+                    "Download Valid Records CSV",
+                    data=dataframe_to_csv(db_result["valid_df"]),
+                    file_name="database_valid_records.csv",
+                    mime="text/csv",
+                    key="database_import_valid_download"
+                )
+                st.download_button(
+                    "Download Rejected Records CSV",
+                    data=dataframe_to_csv(db_result["rejected_df"]),
+                    file_name="database_rejected_records.csv",
+                    mime="text/csv",
+                    key="database_import_rejected_download"
+                )
+                db_quality = st.session_state.get("database_import_quality_report")
+                if db_quality:
+                    st.subheader("Data Quality Report")
+                    st.metric("Quality Score", f"{db_quality['quality_score']}%")
+                    st.write("**Recommendations**")
+                    for item in db_quality["recommendations"]:
+                        st.info(item)
+
+
 # --------------------------------------------------
 # ETL DASHBOARD - PHASE 6
 # --------------------------------------------------
