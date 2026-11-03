@@ -1,10 +1,17 @@
 
 import streamlit as st
+import hashlib
 
 from modules.file_reader import read_uploaded_file
 from modules.profiler import profile_dataframe
 from modules.cleaner import clean_dataframe
 from modules.validator import validate_dataframe
+from modules.pipeline import run_etl_pipeline
+from modules.exporter import (
+    dataframe_to_csv,
+    dataframe_to_excel,
+    create_etl_excel_report
+)
 
 
 # --------------------------------------------------
@@ -20,387 +27,803 @@ st.set_page_config(
 st.title("🧹 SmartETL AI")
 st.caption("Intelligent ETL and Data Quality Platform")
 
-st.sidebar.title("SmartETL Settings")
-st.sidebar.info("Phase 2, 3 & 4: Upload, Cleaning and Validation")
+
+# --------------------------------------------------
+# SIDEBAR NAVIGATION
+# --------------------------------------------------
+
+st.sidebar.title("SmartETL AI")
+st.sidebar.caption("Data Engineering Platform")
+
+selected_page = st.sidebar.radio(
+    "Navigation",
+    [
+        "Home",
+        "Data Preparation",
+        "Complete ETL Pipeline"
+    ]
+)
+
+st.sidebar.divider()
+st.sidebar.info("Phases 1–4 completed | Phase 5 in progress")
 
 MAX_FILE_SIZE_MB = 50
 
 
 # --------------------------------------------------
-# FILE UPLOAD
+# HOME PAGE
 # --------------------------------------------------
 
-uploaded_file = st.file_uploader(
-    "Upload your dataset",
-    type=["csv", "xlsx", "xls", "json"]
-)
+if selected_page == "Home":
+
+    st.header("Welcome to SmartETL AI")
+
+    st.write(
+        "A Python-based ETL and data quality platform "
+        "for profiling, cleaning, validating and processing data."
+    )
+
+    st.subheader("Project Development Progress")
+
+    phases = [
+        ("Phase 1", "Project Setup & GitHub", "Completed"),
+        ("Phase 2", "File Upload & Data Profiling", "Completed"),
+        ("Phase 3", "Data Cleaning", "Completed"),
+        ("Phase 4", "Data Validation", "Completed"),
+        ("Phase 5", "Complete ETL Pipeline & Export", "In Progress"),
+        ("Phase 6", "ETL Dashboard & Execution History", "Upcoming"),
+        ("Phase 7", "AI-Powered Data Quality Reports", "Upcoming"),
+        ("Phase 8", "Database Integration", "Upcoming"),
+        ("Phase 9", "Deployment & Security", "Upcoming")
+    ]
+
+    for phase, name, status in phases:
+
+        col1, col2, col3 = st.columns([1, 4, 2])
+
+        col1.write(f"**{phase}**")
+        col2.write(name)
+
+        if status == "Completed":
+            col3.success("Completed")
+        elif status == "In Progress":
+            col3.warning("In Progress")
+        else:
+            col3.info("Upcoming")
+
+    st.divider()
+
+    st.subheader("Technology Stack")
+
+    t1, t2, t3, t4 = st.columns(4)
+
+    t1.metric("Language", "Python")
+    t2.metric("Framework", "Streamlit")
+    t3.metric("Data Processing", "Pandas")
+    t4.metric("Export", "CSV / Excel")
+
+    st.info(
+        "Select Data Preparation or Complete ETL Pipeline "
+        "from the sidebar to start processing your data."
+    )
 
 
-if uploaded_file:
+# --------------------------------------------------
+# DATA PAGES - FILE UPLOAD
+# --------------------------------------------------
 
-    if uploaded_file.size > MAX_FILE_SIZE_MB * 1024 * 1024:
-        st.error("File exceeds the 50 MB limit.")
-        st.stop()
+elif selected_page in [
+    "Data Preparation",
+    "Complete ETL Pipeline"
+]:
 
-    try:
-
-        df = read_uploaded_file(uploaded_file)
-
-        if df.empty:
-            st.warning("Uploaded file contains no records.")
-            st.stop()
-
-        if df.columns.duplicated().any():
-            st.error("Duplicate column names detected.")
-            st.stop()
-
-        st.success("File uploaded successfully!")
-
-        # --------------------------------------------------
-        # PHASE 2 - FILE INFORMATION
-        # --------------------------------------------------
-
-        st.subheader("1. File Information")
-
-        col1, col2, col3 = st.columns(3)
-
-        col1.metric("File Name", uploaded_file.name)
-        col2.metric("Rows", f"{len(df):,}")
-        col3.metric("Columns", len(df.columns))
-
-        # --------------------------------------------------
-        # DATA PREVIEW
-        # --------------------------------------------------
-
-        st.subheader("2. Data Preview")
-
-        st.dataframe(
-            df.head(100),
-            use_container_width=True
+    if selected_page == "Data Preparation":
+        st.header("Data Preparation")
+        st.caption(
+            "Phase 2: Upload and Profile | "
+            "Phase 3: Cleaning | Phase 4: Validation"
         )
 
-        # --------------------------------------------------
-        # DATA PROFILING
-        # --------------------------------------------------
-
-        st.subheader("3. Data Quality Profile")
-
-        profile = profile_dataframe(df)
-
-        c1, c2, c3, c4 = st.columns(4)
-
-        c1.metric("Total Records", f"{profile['row_count']:,}")
-        c2.metric("Duplicate Rows", f"{profile['duplicate_rows']:,}")
-        c3.metric("Missing Cells", f"{profile['null_cells']:,}")
-        c4.metric("Completeness", f"{profile['completeness']}%")
-
-        # COLUMN ANALYSIS
-
-        st.subheader("4. Column-Level Analysis")
-
-        st.dataframe(
-            profile["columns"],
-            use_container_width=True
+    else:
+        st.header("Complete ETL Pipeline")
+        st.caption(
+            "Extract → Transform → Validate → Export"
         )
 
-        # STATISTICS
+    uploaded_file = st.file_uploader(
+        "Upload your dataset",
+        type=["csv", "xlsx", "xls", "json"],
+        key="dataset_uploader"
+    )
 
-        st.subheader("5. Descriptive Statistics")
+    if uploaded_file:
 
-        with st.expander("View statistical analysis"):
+        if uploaded_file.size > MAX_FILE_SIZE_MB * 1024 * 1024:
+            st.error("File exceeds the 50 MB limit.")
+            st.stop()
 
-            try:
+        try:
+
+            file_hash = hashlib.sha256(
+                uploaded_file.getvalue()
+            ).hexdigest()
+
+            df = read_uploaded_file(uploaded_file)
+
+            if df.empty:
+                st.warning("Uploaded file contains no records.")
+                st.stop()
+
+            if df.columns.duplicated().any():
+                st.error("Duplicate column names detected.")
+                st.stop()
+
+            st.success("File uploaded successfully!")
+
+            # ==========================================
+            # PAGE 1: DATA PREPARATION
+            # ==========================================
+
+            if selected_page == "Data Preparation":
+
+                # PHASE 2 - FILE INFORMATION
+
+                st.subheader("1. File Information")
+
+                col1, col2, col3 = st.columns(3)
+
+                col1.metric("File Name", uploaded_file.name)
+                col2.metric("Rows", f"{len(df):,}")
+                col3.metric("Columns", len(df.columns))
+
+                # DATA PREVIEW
+
+                st.subheader("2. Data Preview")
 
                 st.dataframe(
-                    df.describe(include="all").transpose(),
+                    df.head(100),
                     use_container_width=True
                 )
 
-            except Exception:
+                # DATA PROFILING
 
-                st.info(
-                    "Statistical analysis is unavailable for this dataset."
+                st.subheader("3. Data Quality Profile")
+
+                profile = profile_dataframe(df)
+
+                c1, c2, c3, c4 = st.columns(4)
+
+                c1.metric(
+                    "Total Records",
+                    f"{profile['row_count']:,}"
                 )
 
-        # NULL ANALYSIS
+                c2.metric(
+                    "Duplicate Rows",
+                    f"{profile['duplicate_rows']:,}"
+                )
 
-        st.subheader("6. Missing Value Analysis")
+                c3.metric(
+                    "Missing Cells",
+                    f"{profile['null_cells']:,}"
+                )
 
-        null_summary = profile["columns"][
-            ["Column", "Null Count", "Null %"]
-        ]
+                c4.metric(
+                    "Completeness",
+                    f"{profile['completeness']}%"
+                )
 
-        st.dataframe(
-            null_summary,
-            use_container_width=True
-        )
+                st.subheader("4. Column-Level Analysis")
 
-        st.success("Data profiling completed successfully!")
+                st.dataframe(
+                    profile["columns"],
+                    use_container_width=True
+                )
 
-        # --------------------------------------------------
-        # PHASE 3 - DATA CLEANING
-        # --------------------------------------------------
+                st.subheader("5. Descriptive Statistics")
 
-        st.divider()
+                with st.expander("View statistical analysis"):
 
-        st.header("7. Data Cleaning")
+                    try:
+                        st.dataframe(
+                            df.describe(include="all").transpose(),
+                            use_container_width=True
+                        )
 
-        st.write(
-            "Select the cleaning operations you want to apply."
-        )
+                    except Exception:
+                        st.info(
+                            "Statistical analysis is unavailable."
+                        )
 
-        remove_duplicates = st.checkbox(
-            "Remove duplicate rows",
-            value=True,
-            key="remove_duplicates"
-        )
+                st.subheader("6. Missing Value Analysis")
 
-        trim_whitespace = st.checkbox(
-            "Trim leading and trailing spaces",
-            value=True,
-            key="trim_whitespace"
-        )
+                null_summary = profile["columns"][
+                    ["Column", "Null Count", "Null %"]
+                ]
 
-        fill_missing = st.checkbox(
-            "Fill missing values",
-            value=False,
-            key="fill_missing"
-        )
+                st.dataframe(
+                    null_summary,
+                    use_container_width=True
+                )
 
-        if fill_missing:
+                st.success("Data profiling completed!")
 
-            st.warning(
-                "Numeric values use median and text values use "
-                "the most frequent value. Review the results."
-            )
+                # PHASE 3 - DATA CLEANING
 
-        if st.button(
-            "Run Data Cleaning",
-            type="primary"
-        ):
+                st.divider()
 
-            cleaned_df, cleaning_report, summary = clean_dataframe(
-                df,
-                remove_duplicates=remove_duplicates,
-                trim_whitespace=trim_whitespace,
-                fill_missing=fill_missing
-            )
+                st.header("7. Data Cleaning")
 
-            st.session_state["cleaned_df"] = cleaned_df
-            st.session_state["cleaning_report"] = cleaning_report
-            st.session_state["cleaning_summary"] = summary
-            st.session_state["source_filename"] = uploaded_file.name
+                remove_duplicates = st.checkbox(
+                    "Remove duplicate rows",
+                    value=True,
+                    key="remove_duplicates"
+                )
 
-            # Clear old validation results after new cleaning
-            for key in [
-                "valid_df",
-                "rejected_df",
-                "validation_report",
-                "validation_source"
-            ]:
-                st.session_state.pop(key, None)
+                trim_whitespace = st.checkbox(
+                    "Trim leading and trailing spaces",
+                    value=True,
+                    key="trim_whitespace"
+                )
 
-            st.success("Data cleaning completed successfully!")
+                fill_missing = st.checkbox(
+                    "Fill missing values",
+                    value=False,
+                    key="fill_missing"
+                )
 
-        # --------------------------------------------------
-        # DISPLAY CLEANING RESULTS
-        # --------------------------------------------------
-
-        if (
-            "cleaned_df" in st.session_state
-            and st.session_state.get("source_filename")
-            == uploaded_file.name
-        ):
-
-            cleaned_df = st.session_state["cleaned_df"]
-            cleaning_report = st.session_state["cleaning_report"]
-            summary = st.session_state["cleaning_summary"]
-
-            st.subheader("8. Cleaning Summary")
-
-            a, b, c, d = st.columns(4)
-
-            a.metric("Original Rows", summary["original_rows"])
-            b.metric("Cleaned Rows", summary["cleaned_rows"])
-            c.metric("Duplicates Removed", summary["duplicates_removed"])
-            d.metric("Missing Cells Remaining", summary["final_missing"])
-
-            st.subheader("9. Cleaning Operations Report")
-
-            st.dataframe(
-                cleaning_report,
-                use_container_width=True
-            )
-
-            st.subheader("10. Cleaned Data Preview")
-
-            st.dataframe(
-                cleaned_df.head(100),
-                use_container_width=True
-            )
-
-            cleaned_csv = cleaned_df.to_csv(
-                index=False
-            ).encode("utf-8-sig")
-
-            st.download_button(
-                "Download Cleaned CSV",
-                data=cleaned_csv,
-                file_name="cleaned_data.csv",
-                mime="text/csv"
-            )
-
-            # --------------------------------------------------
-            # PHASE 4 - DATA VALIDATION
-            # --------------------------------------------------
-
-            st.divider()
-
-            st.header("11. Data Validation Engine")
-
-            st.write(
-                "Select the validation rules for your cleaned dataset."
-            )
-
-            columns = cleaned_df.columns.tolist()
-
-            required_columns = st.multiselect(
-                "Select required columns",
-                options=columns,
-                key="required_validation"
-            )
-
-            unique_columns = st.multiselect(
-                "Select primary key / unique columns",
-                options=columns,
-                key="unique_validation"
-            )
-
-            email_columns = st.multiselect(
-                "Select email columns",
-                options=columns,
-                key="email_validation"
-            )
-
-            phone_columns = st.multiselect(
-                "Select phone number columns",
-                options=columns,
-                key="phone_validation"
-            )
-
-            numeric_columns = st.multiselect(
-                "Select columns that must contain numbers",
-                options=columns,
-                key="numeric_validation"
-            )
-
-            date_columns = st.multiselect(
-                "Select columns that must contain valid dates",
-                options=columns,
-                key="date_validation"
-            )
-
-            if st.button(
-                "Run Data Validation",
-                type="primary"
-            ):
-
-                valid_df, rejected_df, validation_report = (
-                    validate_dataframe(
-                        cleaned_df,
-                        required_columns=required_columns,
-                        unique_columns=unique_columns,
-                        email_columns=email_columns,
-                        phone_columns=phone_columns,
-                        numeric_columns=numeric_columns,
-                        date_columns=date_columns
+                if fill_missing:
+                    st.warning(
+                        "Numeric values use median and text values "
+                        "use the most frequent value."
                     )
-                )
 
-                st.session_state["valid_df"] = valid_df
-                st.session_state["rejected_df"] = rejected_df
-                st.session_state["validation_report"] = validation_report
-                st.session_state["validation_source"] = uploaded_file.name
+                if st.button(
+                    "Run Data Cleaning",
+                    type="primary"
+                ):
 
-                st.success("Data validation completed successfully!")
+                    cleaned_df, cleaning_report, summary = (
+                        clean_dataframe(
+                            df,
+                            remove_duplicates=remove_duplicates,
+                            trim_whitespace=trim_whitespace,
+                            fill_missing=fill_missing
+                        )
+                    )
 
-            # --------------------------------------------------
-            # DISPLAY VALIDATION RESULTS
-            # --------------------------------------------------
+                    st.session_state["cleaned_df"] = cleaned_df
+                    st.session_state["cleaning_report"] = cleaning_report
+                    st.session_state["cleaning_summary"] = summary
+                    st.session_state["preparation_source"] = file_hash
 
-            if (
-                "valid_df" in st.session_state
-                and st.session_state.get("validation_source")
-                == uploaded_file.name
-            ):
+                    for key in [
+                        "valid_df",
+                        "rejected_df",
+                        "validation_report",
+                        "validation_source"
+                    ]:
+                        st.session_state.pop(key, None)
 
-                valid_df = st.session_state["valid_df"]
-                rejected_df = st.session_state["rejected_df"]
-                validation_report = st.session_state["validation_report"]
+                    st.success("Data cleaning completed!")
 
-                st.subheader("12. Validation Summary")
+                # DISPLAY CLEANING RESULTS
 
-                v1, v2, v3 = st.columns(3)
+                if (
+                    "cleaned_df" in st.session_state
+                    and st.session_state.get("preparation_source")
+                    == file_hash
+                ):
 
-                v1.metric("Total Records", len(cleaned_df))
-                v2.metric("Valid Records", len(valid_df))
-                v3.metric("Rejected Records", len(rejected_df))
+                    cleaned_df = st.session_state["cleaned_df"]
+                    cleaning_report = st.session_state["cleaning_report"]
+                    summary = st.session_state["cleaning_summary"]
 
-                st.dataframe(
-                    validation_report,
-                    use_container_width=True
-                )
+                    st.subheader("8. Cleaning Summary")
 
-                # VALID RECORDS
+                    a, b, c, d = st.columns(4)
 
-                st.subheader("13. Valid Records")
+                    a.metric("Original Rows", summary["original_rows"])
+                    b.metric("Cleaned Rows", summary["cleaned_rows"])
+                    c.metric(
+                        "Duplicates Removed",
+                        summary["duplicates_removed"]
+                    )
+                    d.metric(
+                        "Missing Cells Remaining",
+                        summary["final_missing"]
+                    )
 
-                st.dataframe(
-                    valid_df.head(100),
-                    use_container_width=True
-                )
-
-                st.download_button(
-                    "Download Valid Records",
-                    data=valid_df.to_csv(
-                        index=False
-                    ).encode("utf-8-sig"),
-                    file_name="valid_records.csv",
-                    mime="text/csv"
-                )
-
-                # REJECTED RECORDS
-
-                st.subheader("14. Rejected Records and Error Details")
-
-                if not rejected_df.empty:
+                    st.subheader("9. Cleaning Operations Report")
 
                     st.dataframe(
-                        rejected_df,
+                        cleaning_report,
+                        use_container_width=True
+                    )
+
+                    st.subheader("10. Cleaned Data Preview")
+
+                    st.dataframe(
+                        cleaned_df.head(100),
                         use_container_width=True
                     )
 
                     st.download_button(
-                        "Download Rejected Records",
-                        data=rejected_df.to_csv(
-                            index=False
-                        ).encode("utf-8-sig"),
-                        file_name="rejected_records.csv",
-                        mime="text/csv"
+                        "Download Cleaned CSV",
+                        data=dataframe_to_csv(cleaned_df),
+                        file_name="cleaned_data.csv",
+                        mime="text/csv",
+                        key="preparation_cleaned_csv"
                     )
 
-                else:
+                    # PHASE 4 - VALIDATION
+
+                    st.divider()
+
+                    st.header("11. Data Validation Engine")
+
+                    st.write(
+                        "Select validation rules for your cleaned dataset."
+                    )
+
+                    columns = cleaned_df.columns.tolist()
+
+                    required_columns = st.multiselect(
+                        "Select required columns",
+                        columns,
+                        key="required_validation"
+                    )
+
+                    unique_columns = st.multiselect(
+                        "Select primary key / unique columns",
+                        columns,
+                        key="unique_validation"
+                    )
+
+                    email_columns = st.multiselect(
+                        "Select email columns",
+                        columns,
+                        key="email_validation"
+                    )
+
+                    phone_columns = st.multiselect(
+                        "Select phone number columns",
+                        columns,
+                        key="phone_validation"
+                    )
+
+                    numeric_columns = st.multiselect(
+                        "Select numeric columns",
+                        columns,
+                        key="numeric_validation"
+                    )
+
+                    date_columns = st.multiselect(
+                        "Select date columns",
+                        columns,
+                        key="date_validation"
+                    )
+
+                    if st.button(
+                        "Run Data Validation",
+                        type="primary"
+                    ):
+
+                        valid_df, rejected_df, validation_report = (
+                            validate_dataframe(
+                                cleaned_df,
+                                required_columns=required_columns,
+                                unique_columns=unique_columns,
+                                email_columns=email_columns,
+                                phone_columns=phone_columns,
+                                numeric_columns=numeric_columns,
+                                date_columns=date_columns
+                            )
+                        )
+
+                        st.session_state["valid_df"] = valid_df
+                        st.session_state["rejected_df"] = rejected_df
+                        st.session_state["validation_report"] = (
+                            validation_report
+                        )
+                        st.session_state["validation_source"] = file_hash
+
+                        st.success("Data validation completed!")
+
+                    # DISPLAY VALIDATION RESULTS
+
+                    if (
+                        "valid_df" in st.session_state
+                        and st.session_state.get("validation_source")
+                        == file_hash
+                    ):
+
+                        valid_df = st.session_state["valid_df"]
+                        rejected_df = st.session_state["rejected_df"]
+                        validation_report = st.session_state[
+                            "validation_report"
+                        ]
+
+                        st.subheader("12. Validation Summary")
+
+                        v1, v2, v3 = st.columns(3)
+
+                        v1.metric("Total Records", len(cleaned_df))
+                        v2.metric("Valid Records", len(valid_df))
+                        v3.metric("Rejected Records", len(rejected_df))
+
+                        st.subheader("Validation Report")
+
+                        st.dataframe(
+                            validation_report,
+                            use_container_width=True
+                        )
+
+                        st.subheader("13. Valid Records")
+
+                        st.dataframe(
+                            valid_df.head(100),
+                            use_container_width=True
+                        )
+
+                        st.download_button(
+                            "Download Valid Records",
+                            data=dataframe_to_csv(valid_df),
+                            file_name="valid_records.csv",
+                            mime="text/csv",
+                            key="preparation_valid_csv"
+                        )
+
+                        st.subheader(
+                            "14. Rejected Records and Error Details"
+                        )
+
+                        if not rejected_df.empty:
+
+                            st.dataframe(
+                                rejected_df,
+                                use_container_width=True
+                            )
+
+                            st.download_button(
+                                "Download Rejected Records",
+                                data=dataframe_to_csv(rejected_df),
+                                file_name="rejected_records.csv",
+                                mime="text/csv",
+                                key="preparation_rejected_csv"
+                            )
+
+                        else:
+                            st.success(
+                                "Excellent! No rejected records found."
+                            )
+
+            # ==========================================
+            # PAGE 2: COMPLETE ETL PIPELINE
+            # ==========================================
+
+            elif selected_page == "Complete ETL Pipeline":
+
+                st.subheader("1. Input Data Summary")
+
+                c1, c2, c3 = st.columns(3)
+
+                c1.metric("Input File", uploaded_file.name)
+                c2.metric("Total Input Rows", f"{len(df):,}")
+                c3.metric("Total Columns", len(df.columns))
+
+                st.subheader("2. Configure ETL Pipeline")
+
+                st.write("Data Cleaning Options")
+
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    remove_duplicates = st.checkbox(
+                        "Remove duplicate rows",
+                        value=True,
+                        key="pipeline_duplicates"
+                    )
+
+                with col2:
+                    trim_whitespace = st.checkbox(
+                        "Trim whitespace",
+                        value=True,
+                        key="pipeline_trim"
+                    )
+
+                with col3:
+                    fill_missing = st.checkbox(
+                        "Fill missing values",
+                        value=False,
+                        key="pipeline_fill"
+                    )
+
+                if fill_missing:
+                    st.warning(
+                        "Numeric missing values use median; "
+                        "text missing values use mode."
+                    )
+
+                st.divider()
+
+                st.write("Data Validation Rules")
+
+                columns = df.columns.tolist()
+
+                required_columns = st.multiselect(
+                    "Required columns",
+                    columns,
+                    key="pipeline_required"
+                )
+
+                unique_columns = st.multiselect(
+                    "Unique / Primary Key columns",
+                    columns,
+                    key="pipeline_unique"
+                )
+
+                email_columns = st.multiselect(
+                    "Email columns",
+                    columns,
+                    key="pipeline_email"
+                )
+
+                phone_columns = st.multiselect(
+                    "Phone number columns",
+                    columns,
+                    key="pipeline_phone"
+                )
+
+                numeric_columns = st.multiselect(
+                    "Numeric columns",
+                    columns,
+                    key="pipeline_numeric"
+                )
+
+                date_columns = st.multiselect(
+                    "Date columns",
+                    columns,
+                    key="pipeline_date"
+                )
+
+                st.divider()
+
+                st.subheader("3. Execute Complete ETL")
+
+                st.write(
+                    "The pipeline will extract the uploaded file, "
+                    "clean the data, validate records and prepare "
+                    "downloadable outputs."
+                )
+
+                if st.button(
+                    "🚀 Run Complete ETL Pipeline",
+                    type="primary",
+                    use_container_width=True
+                ):
+
+                    with st.spinner(
+                        "Executing ETL pipeline. Please wait..."
+                    ):
+
+                        result = run_etl_pipeline(
+                            df,
+                            remove_duplicates=remove_duplicates,
+                            trim_whitespace=trim_whitespace,
+                            fill_missing=fill_missing,
+                            required_columns=required_columns,
+                            unique_columns=unique_columns,
+                            email_columns=email_columns,
+                            phone_columns=phone_columns,
+                            numeric_columns=numeric_columns,
+                            date_columns=date_columns
+                        )
+
+                    st.session_state["pipeline_result"] = result
+                    st.session_state["pipeline_source"] = file_hash
 
                     st.success(
-                        "Excellent! No rejected records were found."
+                        "Complete ETL Pipeline executed successfully!"
                     )
 
-    except Exception as error:
+                # DISPLAY PIPELINE RESULTS
 
-        st.error(
-            f"Data processing failed: {str(error)}"
+                if (
+                    "pipeline_result" in st.session_state
+                    and st.session_state.get("pipeline_source")
+                    == file_hash
+                ):
+
+                    result = st.session_state["pipeline_result"]
+
+                    cleaned_df = result["cleaned_df"]
+                    valid_df = result["valid_df"]
+                    rejected_df = result["rejected_df"]
+
+                    cleaning_report = result["cleaning_report"]
+                    validation_report = result["validation_report"]
+                    summary = result["summary"]
+
+                    st.divider()
+
+                    st.subheader("4. ETL Execution Summary")
+
+                    m1, m2, m3, m4 = st.columns(4)
+
+                    m1.metric(
+                        "Input Rows",
+                        f"{summary['total_input_rows']:,}"
+                    )
+
+                    m2.metric(
+                        "Cleaned Rows",
+                        f"{summary['cleaned_rows']:,}"
+                    )
+
+                    m3.metric(
+                        "Valid Records",
+                        f"{summary['valid_records']:,}"
+                    )
+
+                    m4.metric(
+                        "Rejected Records",
+                        f"{summary['rejected_records']:,}"
+                    )
+
+                    m5, m6, m7 = st.columns(3)
+
+                    m5.metric(
+                        "Duplicates Removed",
+                        summary["duplicates_removed"]
+                    )
+
+                    m6.metric(
+                        "Missing Cells Filled",
+                        summary["missing_cells_filled"]
+                    )
+
+                    m7.metric(
+                        "Execution Time",
+                        f"{summary['execution_time_seconds']} sec"
+                    )
+
+                    st.success(
+                        f"Pipeline Status: {summary['pipeline_status']}"
+                    )
+
+                    # CLEANING REPORT
+
+                    st.subheader("5. Cleaning Report")
+
+                    st.dataframe(
+                        cleaning_report,
+                        use_container_width=True
+                    )
+
+                    # VALIDATION REPORT
+
+                    st.subheader("6. Validation Report")
+
+                    st.dataframe(
+                        validation_report,
+                        use_container_width=True
+                    )
+
+                    # CLEANED DATA
+
+                    st.subheader("7. Cleaned Data")
+
+                    st.dataframe(
+                        cleaned_df.head(100),
+                        use_container_width=True
+                    )
+
+                    # VALID RECORDS
+
+                    st.subheader("8. Valid Records")
+
+                    st.dataframe(
+                        valid_df.head(100),
+                        use_container_width=True
+                    )
+
+                    # REJECTED RECORDS
+
+                    st.subheader("9. Rejected Records")
+
+                    if not rejected_df.empty:
+
+                        st.dataframe(
+                            rejected_df.head(100),
+                            use_container_width=True
+                        )
+
+                    else:
+
+                        st.success(
+                            "No rejected records found."
+                        )
+
+                    # DOWNLOAD SECTION
+
+                    st.divider()
+
+                    st.header("10. Download ETL Results")
+
+                    d1, d2 = st.columns(2)
+
+                    with d1:
+
+                        st.download_button(
+                            "Download Cleaned CSV",
+                            data=dataframe_to_csv(cleaned_df),
+                            file_name="cleaned_data.csv",
+                            mime="text/csv",
+                            key="pipeline_cleaned_csv"
+                        )
+
+                        st.download_button(
+                            "Download Valid Records CSV",
+                            data=dataframe_to_csv(valid_df),
+                            file_name="valid_records.csv",
+                            mime="text/csv",
+                            key="pipeline_valid_csv"
+                        )
+
+                        st.download_button(
+                            "Download Rejected Records CSV",
+                            data=dataframe_to_csv(rejected_df),
+                            file_name="rejected_records.csv",
+                            mime="text/csv",
+                            key="pipeline_rejected_csv"
+                        )
+
+                    with d2:
+
+                        st.download_button(
+                            "Download Cleaned Excel",
+                            data=dataframe_to_excel(
+                                cleaned_df,
+                                "Cleaned_Data"
+                            ),
+                            file_name="cleaned_data.xlsx",
+                            mime=(
+                                "application/vnd.openxmlformats-officedocument."
+                                "spreadsheetml.sheet"
+                            ),
+                            key="pipeline_cleaned_excel"
+                        )
+
+                        excel_report = create_etl_excel_report(
+                            cleaned_df=cleaned_df,
+                            valid_df=valid_df,
+                            rejected_df=rejected_df,
+                            cleaning_report=cleaning_report,
+                            validation_report=validation_report,
+                            summary=summary
+                        )
+
+                        st.download_button(
+                            "📥 Download Complete ETL Excel Report",
+                            data=excel_report,
+                            file_name="SmartETL_Complete_Report.xlsx",
+                            mime=(
+                                "application/vnd.openxmlformats-officedocument."
+                                "spreadsheetml.sheet"
+                            ),
+                            key="pipeline_complete_excel",
+                            use_container_width=True
+                        )
+
+        except Exception as error:
+
+            st.error(
+                f"Data processing failed: {str(error)}"
+            )
+
+    else:
+
+        st.info(
+            "Upload a CSV, Excel or JSON file to start."
         )
-
-else:
-
-    st.info("Upload a CSV, Excel or JSON file to start your ETL process.")
