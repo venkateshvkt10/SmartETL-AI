@@ -12,6 +12,11 @@ from modules.exporter import (
     dataframe_to_excel,
     create_etl_excel_report
 )
+from modules.history import (
+    save_etl_history,
+    load_etl_history,
+    get_etl_history_summary
+)
 
 
 # --------------------------------------------------
@@ -40,7 +45,8 @@ selected_page = st.sidebar.radio(
     [
         "Home",
         "Data Preparation",
-        "Complete ETL Pipeline"
+        "Complete ETL Pipeline",
+        "ETL Dashboard"
     ]
 )
 
@@ -622,7 +628,12 @@ elif selected_page in [
 
                     st.session_state["pipeline_result"] = result
                     st.session_state["pipeline_source"] = file_hash
-
+                    try:
+                        save_etl_history(uploaded_file.name, result["summary"])
+                        st.success("ETL execution history saved successfully!")
+                    except Exception as history_error:
+                        st.warning(f"Pipeline completed, but history could not be saved: {history_error}")
+            
                     st.success(
                         "Complete ETL Pipeline executed successfully!"
                     )
@@ -827,3 +838,85 @@ elif selected_page in [
         st.info(
             "Upload a CSV, Excel or JSON file to start."
         )
+        
+# --------------------------------------------------
+# ETL DASHBOARD - PHASE 6
+# --------------------------------------------------
+
+elif selected_page == "ETL Dashboard":
+
+    st.title("📊 ETL Execution Dashboard")
+    st.caption("Monitor ETL pipeline performance and execution history.")
+
+    history_df = load_etl_history()
+
+    if history_df.empty:
+
+        st.info("No ETL execution history available. Run your ETL pipeline first.")
+
+    else:
+
+        summary = get_etl_history_summary()
+
+        # KPI METRICS
+        st.subheader("1. Pipeline Overview")
+
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric("Total Runs", summary["total_runs"])
+        col2.metric("Total Records", f'{summary["total_records"]:,}')
+        col3.metric("Valid Records", f'{summary["total_valid"]:,}')
+        col4.metric("Rejected Records", f'{summary["total_rejected"]:,}')
+
+        st.divider()
+
+        # EXECUTION PERFORMANCE
+        st.subheader("2. Execution Performance")
+
+        st.metric(
+            "Average Execution Time",
+            f'{summary["average_execution_time"]} seconds'
+        )
+
+        st.line_chart(
+            history_df.set_index("Execution Date")[
+                ["Execution Time (Seconds)"]
+            ]
+        )
+
+        st.divider()
+
+        # VALID VS REJECTED
+        st.subheader("3. Valid vs Rejected Records")
+
+        st.bar_chart(
+            history_df.set_index("Execution Date")[
+                ["Valid Records", "Rejected Records"]
+            ]
+        )
+
+        st.divider()
+
+        # EXECUTION HISTORY
+        st.subheader("4. Execution History")
+
+        st.dataframe(
+            history_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # DOWNLOAD HISTORY
+        st.subheader("5. Export History")
+
+        history_csv = history_df.to_csv(
+            index=False
+        ).encode("utf-8-sig")
+
+        st.download_button(
+            label="📥 Download Execution History",
+            data=history_csv,
+            file_name="etl_execution_history.csv",
+            mime="text/csv"
+        )
+

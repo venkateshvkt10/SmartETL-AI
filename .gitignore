@@ -11,3 +11,4 @@ rejected/
 logs/
 .DS_Store
 Thumbs.db
+data/etl_history.csv
