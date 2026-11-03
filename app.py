@@ -3,6 +3,8 @@ import streamlit as st
 
 from modules.file_reader import read_uploaded_file
 from modules.profiler import profile_dataframe
+from modules.cleaner import clean_dataframe
+
 
 st.set_page_config(
     page_title="SmartETL AI",
@@ -14,7 +16,7 @@ st.title("🧹 SmartETL AI")
 st.caption("Intelligent ETL and Data Quality Platform")
 
 st.sidebar.title("SmartETL Settings")
-st.sidebar.info("Phase 2: Upload & Data Profiling")
+st.sidebar.info("Phase 3: Data Cleaning")
 
 MAX_FILE_SIZE_MB = 50
 
@@ -43,7 +45,7 @@ if uploaded_file:
 
         st.success("File uploaded successfully!")
 
-        # 1. File information
+        # PHASE 2 - FILE INFORMATION
         st.subheader("1. File Information")
 
         col1, col2, col3 = st.columns(3)
@@ -52,7 +54,7 @@ if uploaded_file:
         col2.metric("Rows", f"{len(df):,}")
         col3.metric("Columns", len(df.columns))
 
-        # 2. Data preview
+        # PHASE 2 - DATA PREVIEW
         st.subheader("2. Data Preview")
 
         st.dataframe(
@@ -60,34 +62,18 @@ if uploaded_file:
             use_container_width=True
         )
 
-        # 3. Data profiling
+        # PHASE 2 - DATA PROFILING
         st.subheader("3. Data Quality Profile")
 
         profile = profile_dataframe(df)
 
         c1, c2, c3, c4 = st.columns(4)
 
-        c1.metric(
-            "Total Records",
-            f"{profile['row_count']:,}"
-        )
+        c1.metric("Total Records", f"{profile['row_count']:,}")
+        c2.metric("Duplicate Rows", f"{profile['duplicate_rows']:,}")
+        c3.metric("Missing Cells", f"{profile['null_cells']:,}")
+        c4.metric("Completeness", f"{profile['completeness']}%")
 
-        c2.metric(
-            "Duplicate Rows",
-            f"{profile['duplicate_rows']:,}"
-        )
-
-        c3.metric(
-            "Missing Cells",
-            f"{profile['null_cells']:,}"
-        )
-
-        c4.metric(
-            "Completeness",
-            f"{profile['completeness']}%"
-        )
-
-        # 4. Column-level analysis
         st.subheader("4. Column-Level Analysis")
 
         st.dataframe(
@@ -95,17 +81,18 @@ if uploaded_file:
             use_container_width=True
         )
 
-        # 5. Descriptive statistics
         st.subheader("5. Descriptive Statistics")
 
         with st.expander("View statistical analysis"):
 
-            st.dataframe(
-                df.describe(include="all").transpose(),
-                use_container_width=True
-            )
+            try:
+                st.dataframe(
+                    df.describe(include="all").transpose(),
+                    use_container_width=True
+                )
+            except Exception:
+                st.info("Statistical analysis is unavailable for this dataset.")
 
-        # 6. Null analysis
         st.subheader("6. Missing Value Analysis")
 
         null_summary = profile["columns"][
@@ -117,12 +104,99 @@ if uploaded_file:
             use_container_width=True
         )
 
-        st.success(
-            "Data profiling completed successfully!"
+        st.success("Data profiling completed successfully!")
+
+        # PHASE 3 - DATA CLEANING
+        st.divider()
+
+        st.header("7. Data Cleaning")
+
+        st.write(
+            "Select the operations you want to apply to your dataset."
         )
+
+        remove_duplicates = st.checkbox(
+            "Remove duplicate rows",
+            value=True
+        )
+
+        trim_whitespace = st.checkbox(
+            "Trim leading and trailing spaces",
+            value=True
+        )
+
+        fill_missing = st.checkbox(
+            "Fill missing values",
+            value=False
+        )
+
+        if fill_missing:
+            st.warning(
+                "Numeric values will use the median. "
+                "Text values will use the most frequent value. "
+                "Review the results before using them."
+            )
+
+        if st.button("Run Data Cleaning", type="primary"):
+
+            cleaned_df, cleaning_report, summary = clean_dataframe(
+                df,
+                remove_duplicates=remove_duplicates,
+                trim_whitespace=trim_whitespace,
+                fill_missing=fill_missing
+            )
+
+            st.session_state["cleaned_df"] = cleaned_df
+            st.session_state["cleaning_report"] = cleaning_report
+            st.session_state["cleaning_summary"] = summary
+            st.session_state["source_filename"] = uploaded_file.name
+
+            st.success("Data cleaning completed successfully!")
+
+        # DISPLAY CLEANING RESULTS
+        if (
+            "cleaned_df" in st.session_state
+            and st.session_state.get("source_filename") == uploaded_file.name
+        ):
+
+            cleaned_df = st.session_state["cleaned_df"]
+            cleaning_report = st.session_state["cleaning_report"]
+            summary = st.session_state["cleaning_summary"]
+
+            st.subheader("8. Cleaning Summary")
+
+            a, b, c, d = st.columns(4)
+
+            a.metric("Original Rows", summary["original_rows"])
+            b.metric("Cleaned Rows", summary["cleaned_rows"])
+            c.metric("Duplicates Removed", summary["duplicates_removed"])
+            d.metric("Missing Cells Remaining", summary["final_missing"])
+
+            st.subheader("9. Cleaning Operations Report")
+
+            st.dataframe(
+                cleaning_report,
+                use_container_width=True
+            )
+
+            st.subheader("10. Cleaned Data Preview")
+
+            st.dataframe(
+                cleaned_df.head(100),
+                use_container_width=True
+            )
+
+            cleaned_csv = cleaned_df.to_csv(
+                index=False
+            ).encode("utf-8-sig")
+
+            st.download_button(
+                "Download Cleaned CSV",
+                data=cleaned_csv,
+                file_name="cleaned_data.csv",
+                mime="text/csv"
+            )
 
     except Exception as error:
 
-        st.error(
-            f"Data processing failed: {str(error)}"
-        )
+        st.error(f"Data processing failed: {str(error)}")
