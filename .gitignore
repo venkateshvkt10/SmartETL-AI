@@ -28,3 +28,6 @@ app_backup_before_login.py
 # System files
 .DS_Store
 Thumbs.db
+
+data/
+app_backup_before_login.py
