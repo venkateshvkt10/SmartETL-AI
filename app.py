@@ -2,6 +2,14 @@
 import streamlit as st
 import hashlib
 
+from modules.auth import (
+    initialize_auth_db,
+    authenticate_user,
+    create_user,
+    list_users,
+    set_user_active
+)
+
 from modules.file_reader import read_uploaded_file
 from modules.profiler import profile_dataframe
 from modules.cleaner import clean_dataframe
@@ -30,6 +38,11 @@ from modules.database_import import (
     import_database_table,
     import_sql_query
 )
+from modules.quality_report import generate_quality_report
+from modules.gemini_report import (
+    gemini_is_configured,
+    generate_gemini_quality_report
+)
 
 
 # --------------------------------------------------
@@ -42,6 +55,62 @@ st.set_page_config(
     layout="wide"
 )
 
+
+# --------------------------------------------------
+# AUTHENTICATION - PRIVATE APPLICATION ACCESS
+# --------------------------------------------------
+
+try:
+    initialize_auth_db()
+except Exception as auth_error:
+    st.error("SmartETL AI authentication setup failed.")
+    st.error(str(auth_error))
+    st.info(
+        "Check ADMIN_USERNAME and ADMIN_PASSWORD in your local .env file. "
+        "Do not share your .env file or credentials."
+    )
+    st.stop()
+
+if "authenticated_user" not in st.session_state:
+    st.session_state["authenticated_user"] = None
+
+if not st.session_state["authenticated_user"]:
+    st.title("🔐 SmartETL AI")
+    st.subheader("Sign in to your account")
+    st.caption("Private access. Contact the administrator if you need an account.")
+
+    with st.form("smartetl_login_form"):
+        login_username = st.text_input("Username")
+        login_password = st.text_input("Password", type="password")
+        login_submitted = st.form_submit_button(
+            "Login",
+            type="primary",
+            use_container_width=True
+        )
+
+    if login_submitted:
+        logged_in_user = authenticate_user(
+            login_username,
+            login_password
+        )
+
+        if logged_in_user:
+            st.session_state["authenticated_user"] = logged_in_user
+            st.rerun()
+        else:
+            st.error("Invalid username or password, or the account is inactive.")
+
+    st.stop()
+
+current_user = st.session_state["authenticated_user"]
+
+# Prevent data from a previous login being reused after an account switch.
+if st.session_state.get("_session_user_id") != current_user["id"]:
+    st.session_state.clear()
+    st.session_state["authenticated_user"] = current_user
+    st.session_state["_session_user_id"] = current_user["id"]
+    st.rerun()
+
 st.title("🧹 SmartETL AI")
 st.caption("Intelligent ETL and Data Quality Platform")
 
@@ -52,29 +121,136 @@ st.caption("Intelligent ETL and Data Quality Platform")
 
 st.sidebar.title("SmartETL AI")
 st.sidebar.caption("Data Engineering Platform")
+st.sidebar.write(f"Signed in: **{current_user['username']}**")
+st.sidebar.caption(f"Role: {current_user['role'].title()}")
+
+if st.sidebar.button("Logout", use_container_width=True):
+    # Release a database engine if one was opened during this session.
+    source_engine = st.session_state.get("source_db_engine")
+    if source_engine is not None:
+        try:
+            source_engine.dispose()
+        except Exception:
+            pass
+
+    # Remove uploaded data, ETL results, reports and widget state.
+    st.session_state.clear()
+    st.rerun()
+
+navigation_pages = [
+    "Home",
+    "Data Preparation",
+    "Complete ETL Pipeline",
+    "Database Import",
+    "ETL Dashboard"
+]
+
+if current_user["role"] == "admin":
+    navigation_pages.append("User Management")
 
 selected_page = st.sidebar.radio(
     "Navigation",
-    [
-        "Home",
-        "Data Preparation",
-        "Complete ETL Pipeline",
-        "Database Import",
-        "ETL Dashboard"
-    ]
+    navigation_pages
 )
 
 st.sidebar.divider()
-st.sidebar.info("Phases 1–4 completed | Phase 5 in progress")
+st.sidebar.info("Private SmartETL AI workspace")
 
 MAX_FILE_SIZE_MB = 50
+
+
+# --------------------------------------------------
+# ADMIN - USER MANAGEMENT
+# --------------------------------------------------
+
+if selected_page == "User Management":
+
+    if current_user["role"] != "admin":
+        st.error("You are not authorized to access this page.")
+        st.stop()
+
+    st.header("👥 User Management")
+    st.caption("Only the administrator can create and manage user accounts.")
+
+    st.subheader("Create a New User")
+
+    with st.form("create_smartetl_user_form"):
+        new_username = st.text_input(
+            "Username",
+            help="Use 3–32 letters, numbers, underscores or hyphens."
+        )
+        new_password = st.text_input(
+            "Temporary password",
+            type="password",
+            help="Use at least 12 characters."
+        )
+        confirm_password = st.text_input(
+            "Confirm temporary password",
+            type="password"
+        )
+        create_user_submitted = st.form_submit_button(
+            "Create User",
+            type="primary"
+        )
+
+    if create_user_submitted:
+        if new_password != confirm_password:
+            st.error("The passwords do not match.")
+        else:
+            try:
+                create_user(new_username, new_password)
+                st.success(
+                    f"User '{new_username.strip().lower()}' created successfully. "
+                    "Share the credentials with that user through a secure channel."
+                )
+            except ValueError as user_error:
+                st.error(str(user_error))
+            except Exception as user_error:
+                st.error(f"Could not create user: {user_error}")
+
+    st.divider()
+    st.subheader("Existing Accounts")
+
+    users = list_users()
+
+    if users:
+        for user in users:
+            user_col, role_col, status_col, action_col = st.columns(
+                [3, 1.5, 1.5, 2]
+            )
+
+            user_col.write(f"**{user['username']}**")
+            role_col.write(user["role"].title())
+            status_col.write(
+                "Active" if user["is_active"] else "Inactive"
+            )
+
+            if user["role"] == "user":
+                if user["is_active"]:
+                    if action_col.button(
+                        "Deactivate",
+                        key=f"deactivate_user_{user['id']}"
+                    ):
+                        set_user_active(user["id"], False)
+                        st.rerun()
+                else:
+                    if action_col.button(
+                        "Activate",
+                        key=f"activate_user_{user['id']}"
+                    ):
+                        set_user_active(user["id"], True)
+                        st.rerun()
+            else:
+                action_col.caption("Protected admin account")
+    else:
+        st.info("No user accounts have been created yet.")
 
 
 # --------------------------------------------------
 # HOME PAGE
 # --------------------------------------------------
 
-if selected_page == "Home":
+elif selected_page == "Home":
 
     st.header("Welcome to SmartETL AI")
 
@@ -639,15 +815,17 @@ elif selected_page in [
                             numeric_columns=numeric_columns,
                             date_columns=date_columns
                         )
-                            
+
                     st.session_state["pipeline_result"] = result
                     st.session_state["pipeline_source"] = file_hash
-                    
+
                     try:
-                        save_etl_history(uploaded_file.name, result["summary"])
+                        save_etl_history(
+                            current_user["id"], uploaded_file.name, result["summary"])
                         st.success("ETL execution history saved successfully!")
                     except Exception as history_error:
-                        st.warning(f"Pipeline completed, but history could not be saved: {history_error}")
+                        st.warning(
+                            f"Pipeline completed, but history could not be saved: {history_error}")
                     # Generate Data Quality Report
                     quality_report = generate_quality_report(df, result)
                     st.session_state["quality_report"] = quality_report
@@ -769,6 +947,7 @@ elif selected_page in [
                             mime="text/plain",
                             key="quality_report_download"
                         )
+
                     # CLEANING REPORT
 
                     st.subheader("5. Cleaning Report")
@@ -804,7 +983,7 @@ elif selected_page in [
                         valid_df.head(100),
                         use_container_width=True
                     )
-                
+
                     # SQL SERVER DATABASE INTEGRATION
 
                     st.divider()
@@ -828,7 +1007,6 @@ elif selected_page in [
 
                         except Exception as error:
                             st.error(f"Connection failed: {error}")
-
 
                     if not valid_df.empty:
 
@@ -857,7 +1035,6 @@ elif selected_page in [
 
                             except Exception as error:
                                 st.error(f"SQL Server load failed: {error}")
-
 
                     # DISPLAY DATABASE LOAD RESULT
 
@@ -894,7 +1071,8 @@ elif selected_page in [
 
                     else:
                         if valid_df.empty:
-                            st.warning("No valid records available for database loading.")
+                            st.warning(
+                                "No valid records available for database loading.")
 
                     # REJECTED RECORDS
 
@@ -995,7 +1173,7 @@ elif selected_page in [
         st.info(
             "Upload a CSV, Excel or JSON file to start."
         )
-        
+
 # --------------------------------------------------
 # DATABASE IMPORT - SOURCE DATABASE CONNECTIVITY
 # --------------------------------------------------
@@ -1035,19 +1213,23 @@ elif selected_page == "Database Import":
                 database = st.text_input("Database name")
             with c2:
                 if db_type == "SQL Server":
-                    windows_auth = st.checkbox("Use Windows Authentication", value=True)
+                    windows_auth = st.checkbox(
+                        "Use Windows Authentication", value=True)
                     driver = st.selectbox(
                         "ODBC Driver",
-                        ["ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server"]
+                        ["ODBC Driver 18 for SQL Server",
+                            "ODBC Driver 17 for SQL Server"]
                     )
                 else:
                     windows_auth = False
                     driver = "ODBC Driver 18 for SQL Server"
                 username = st.text_input("Username", disabled=windows_auth)
-                password = st.text_input("Password", type="password", disabled=windows_auth)
+                password = st.text_input(
+                    "Password", type="password", disabled=windows_auth)
             sqlite_path = None
 
-        connect_clicked = st.form_submit_button("Test Connection", type="primary")
+        connect_clicked = st.form_submit_button(
+            "Test Connection", type="primary")
 
     if connect_clicked:
         try:
@@ -1113,7 +1295,8 @@ elif selected_page == "Database Import":
                     )
                     if st.button("Import Selected Table", type="primary"):
                         imported_df, truncated = import_database_table(
-                            engine, selected_table, selected_schema, int(row_limit)
+                            engine, selected_table, selected_schema, int(
+                                row_limit)
                         )
                         st.session_state["database_import_df"] = imported_df
                         st.session_state["database_import_source"] = f"{db_type}: {selected_table}"
@@ -1143,12 +1326,15 @@ elif selected_page == "Database Import":
 
         imported_df = st.session_state.get("database_import_df")
         if imported_df is not None:
-            source_label = st.session_state.get("database_import_source", "Database source")
+            source_label = st.session_state.get(
+                "database_import_source", "Database source")
             st.divider()
             st.subheader("Imported Data Preview")
             if st.session_state.get("database_import_truncated"):
-                st.warning(f"Preview/import was limited to {len(imported_df):,} rows. Increase the row limit if needed.")
-            st.success(f"Imported {len(imported_df):,} rows and {len(imported_df.columns):,} columns from {source_label}.")
+                st.warning(
+                    f"Preview/import was limited to {len(imported_df):,} rows. Increase the row limit if needed.")
+            st.success(
+                f"Imported {len(imported_df):,} rows and {len(imported_df.columns):,} columns from {source_label}.")
             st.dataframe(imported_df.head(100), use_container_width=True)
 
             profile = profile_dataframe(imported_df)
@@ -1166,18 +1352,28 @@ elif selected_page == "Database Import":
             with st.form("database_import_etl_form"):
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    db_remove_duplicates = st.checkbox("Remove duplicate rows", value=True, key="db_etl_dedupe")
+                    db_remove_duplicates = st.checkbox(
+                        "Remove duplicate rows", value=True, key="db_etl_dedupe")
                 with c2:
-                    db_trim_whitespace = st.checkbox("Trim whitespace", value=True, key="db_etl_trim")
+                    db_trim_whitespace = st.checkbox(
+                        "Trim whitespace", value=True, key="db_etl_trim")
                 with c3:
-                    db_fill_missing = st.checkbox("Fill missing values", value=False, key="db_etl_fill")
-                db_required = st.multiselect("Required columns", cols, key="db_etl_required")
-                db_unique = st.multiselect("Unique / primary key columns", cols, key="db_etl_unique")
-                db_email = st.multiselect("Email columns", cols, key="db_etl_email")
-                db_phone = st.multiselect("Phone columns", cols, key="db_etl_phone")
-                db_numeric = st.multiselect("Numeric columns", cols, key="db_etl_numeric")
-                db_dates = st.multiselect("Date columns", cols, key="db_etl_dates")
-                run_database_etl = st.form_submit_button("Run ETL on Imported Data", type="primary")
+                    db_fill_missing = st.checkbox(
+                        "Fill missing values", value=False, key="db_etl_fill")
+                db_required = st.multiselect(
+                    "Required columns", cols, key="db_etl_required")
+                db_unique = st.multiselect(
+                    "Unique / primary key columns", cols, key="db_etl_unique")
+                db_email = st.multiselect(
+                    "Email columns", cols, key="db_etl_email")
+                db_phone = st.multiselect(
+                    "Phone columns", cols, key="db_etl_phone")
+                db_numeric = st.multiselect(
+                    "Numeric columns", cols, key="db_etl_numeric")
+                db_dates = st.multiselect(
+                    "Date columns", cols, key="db_etl_dates")
+                run_database_etl = st.form_submit_button(
+                    "Run ETL on Imported Data", type="primary")
 
             if run_database_etl:
                 try:
@@ -1196,12 +1392,16 @@ elif selected_page == "Database Import":
                         )
                     st.session_state["database_import_etl_result"] = result
                     st.session_state["database_import_etl_source"] = source_label
-                    st.session_state["database_import_quality_report"] = generate_quality_report(imported_df, result)
+                    st.session_state["database_import_quality_report"] = generate_quality_report(
+                        imported_df, result)
                     try:
-                        save_etl_history(source_label, result["summary"])
+                        save_etl_history(
+                            current_user["id"], source_label, result["summary"])
                     except Exception as history_error:
-                        st.warning(f"ETL completed, but execution history could not be saved: {history_error}")
-                    st.success("ETL completed successfully for the imported database data.")
+                        st.warning(
+                            f"ETL completed, but execution history could not be saved: {history_error}")
+                    st.success(
+                        "ETL completed successfully for the imported database data.")
                 except Exception as error:
                     st.error(f"Database ETL failed: {error}")
 
@@ -1213,11 +1413,14 @@ elif selected_page == "Database Import":
                 r1.metric("Input Rows", db_summary["total_input_rows"])
                 r2.metric("Valid Records", db_summary["valid_records"])
                 r3.metric("Rejected Records", db_summary["rejected_records"])
-                r4.metric("Execution Time", f"{db_summary['execution_time_seconds']} sec")
+                r4.metric("Execution Time",
+                          f"{db_summary['execution_time_seconds']} sec")
                 st.subheader("Valid Records")
-                st.dataframe(db_result["valid_df"].head(100), use_container_width=True)
+                st.dataframe(db_result["valid_df"].head(
+                    100), use_container_width=True)
                 st.subheader("Rejected Records")
-                st.dataframe(db_result["rejected_df"].head(100), use_container_width=True)
+                st.dataframe(db_result["rejected_df"].head(
+                    100), use_container_width=True)
                 st.download_button(
                     "Download Valid Records CSV",
                     data=dataframe_to_csv(db_result["valid_df"]),
@@ -1232,10 +1435,12 @@ elif selected_page == "Database Import":
                     mime="text/csv",
                     key="database_import_rejected_download"
                 )
-                db_quality = st.session_state.get("database_import_quality_report")
+                db_quality = st.session_state.get(
+                    "database_import_quality_report")
                 if db_quality:
                     st.subheader("Data Quality Report")
-                    st.metric("Quality Score", f"{db_quality['quality_score']}%")
+                    st.metric("Quality Score",
+                              f"{db_quality['quality_score']}%")
                     st.write("**Recommendations**")
                     for item in db_quality["recommendations"]:
                         st.info(item)
@@ -1250,7 +1455,7 @@ elif selected_page == "ETL Dashboard":
     st.title("📊 ETL Execution Dashboard")
     st.caption("Monitor ETL pipeline performance and execution history.")
 
-    history_df = load_etl_history()
+    history_df = load_etl_history(current_user["id"])
 
     if history_df.empty:
 
@@ -1258,7 +1463,7 @@ elif selected_page == "ETL Dashboard":
 
     else:
 
-        summary = get_etl_history_summary()
+        summary = get_etl_history_summary(current_user["id"])
 
         # KPI METRICS
         st.subheader("1. Pipeline Overview")
@@ -1321,4 +1526,3 @@ elif selected_page == "ETL Dashboard":
             file_name="etl_execution_history.csv",
             mime="text/csv"
         )
-
