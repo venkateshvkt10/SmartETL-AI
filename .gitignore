@@ -22,6 +22,9 @@ data/etl_history.db
 data/etl_history.db-wal
 data/etl_history.db-shm
 
+# Local backups
+app_backup_before_login.py
+
 # System files
 .DS_Store
 Thumbs.db

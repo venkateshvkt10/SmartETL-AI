@@ -10,6 +10,7 @@ from modules.auth import (
     set_user_active
 )
 
+from modules.landing import render_public_site, render_home_page
 from modules.file_reader import read_uploaded_file
 from modules.profiler import profile_dataframe
 from modules.cleaner import clean_dataframe
@@ -75,31 +76,7 @@ if "authenticated_user" not in st.session_state:
     st.session_state["authenticated_user"] = None
 
 if not st.session_state["authenticated_user"]:
-    st.title("🔐 SmartETL AI")
-    st.subheader("Sign in to your account")
-    st.caption("Private access. Contact the administrator if you need an account.")
-
-    with st.form("smartetl_login_form"):
-        login_username = st.text_input("Username")
-        login_password = st.text_input("Password", type="password")
-        login_submitted = st.form_submit_button(
-            "Login",
-            type="primary",
-            use_container_width=True
-        )
-
-    if login_submitted:
-        logged_in_user = authenticate_user(
-            login_username,
-            login_password
-        )
-
-        if logged_in_user:
-            st.session_state["authenticated_user"] = logged_in_user
-            st.rerun()
-        else:
-            st.error("Invalid username or password, or the account is inactive.")
-
+    render_public_site(authenticate_user)
     st.stop()
 
 current_user = st.session_state["authenticated_user"]
@@ -252,56 +229,7 @@ if selected_page == "User Management":
 
 elif selected_page == "Home":
 
-    st.header("Welcome to SmartETL AI")
-
-    st.write(
-        "A Python-based ETL and data quality platform "
-        "for profiling, cleaning, validating and processing data."
-    )
-
-    st.subheader("Project Development Progress")
-
-    phases = [
-        ("Phase 1", "Project Setup & GitHub", "Completed"),
-        ("Phase 2", "File Upload & Data Profiling", "Completed"),
-        ("Phase 3", "Data Cleaning", "Completed"),
-        ("Phase 4", "Data Validation", "Completed"),
-        ("Phase 5", "Complete ETL Pipeline & Export", "In Progress"),
-        ("Phase 6", "ETL Dashboard & Execution History", "Upcoming"),
-        ("Phase 7", "AI-Powered Data Quality Reports", "Upcoming"),
-        ("Phase 8", "Database Integration", "Upcoming"),
-        ("Phase 9", "Deployment & Security", "Upcoming")
-    ]
-
-    for phase, name, status in phases:
-
-        col1, col2, col3 = st.columns([1, 4, 2])
-
-        col1.write(f"**{phase}**")
-        col2.write(name)
-
-        if status == "Completed":
-            col3.success("Completed")
-        elif status == "In Progress":
-            col3.warning("In Progress")
-        else:
-            col3.info("Upcoming")
-
-    st.divider()
-
-    st.subheader("Technology Stack")
-
-    t1, t2, t3, t4 = st.columns(4)
-
-    t1.metric("Language", "Python")
-    t2.metric("Framework", "Streamlit")
-    t3.metric("Data Processing", "Pandas")
-    t4.metric("Export", "CSV / Excel")
-
-    st.info(
-        "Select Data Preparation or Complete ETL Pipeline "
-        "from the sidebar to start processing your data."
-    )
+    render_home_page(current_user)
 
 
 # --------------------------------------------------
