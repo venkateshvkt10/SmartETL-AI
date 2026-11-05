@@ -1,14 +1,27 @@
+# Python
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Virtual environment
 .venv/
 venv/
+
+# Secrets
 .env
 .streamlit/secrets.toml
+
+# Application data
 uploads/
 processed/
 rejected/
 logs/
+data/etl_history.csv
+data/auth.db
+data/etl_history.db
+data/etl_history.db-wal
+data/etl_history.db-shm
+
+# System files
 .DS_Store
 Thumbs.db
-data/etl_history.csv
