@@ -1,4 +1,3 @@
-
 import json
 import uuid
 
@@ -7,7 +6,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 
 
-# SQL Server configuration
+# SQL Server configuration (local PC only; needs pyodbc + ODBC Driver 18)
 SERVER = "localhost"
 DATABASE = "SmartETL_AI"
 DRIVER = "ODBC Driver 18 for SQL Server"
@@ -25,15 +24,36 @@ connection_url = URL.create(
     query={"odbc_connect": CONNECTION_STRING}
 )
 
-engine = create_engine(
-    connection_url,
-    fast_executemany=True,
-    pool_pre_ping=True
-)
+_engine = None
+
+
+def get_engine():
+    """Create the SQL Server engine only when it is first needed.
+
+    Creating it at import time crashed the whole app on hosts without
+    pyodbc / the ODBC driver (for example Streamlit Community Cloud).
+    """
+    global _engine
+
+    if _engine is None:
+        try:
+            _engine = create_engine(
+                connection_url,
+                fast_executemany=True,
+                pool_pre_ping=True
+            )
+        except ModuleNotFoundError as error:
+            raise RuntimeError(
+                "SQL Server loading is not available in this environment "
+                "(pyodbc and the Microsoft ODBC driver are not installed). "
+                "This feature works on a PC where they are installed."
+            ) from error
+
+    return _engine
 
 
 def test_database_connection():
-    with engine.connect() as connection:
+    with get_engine().connect() as connection:
         result = connection.execute(
             text("SELECT DB_NAME()")
         )
@@ -53,6 +73,8 @@ def load_valid_records(df, source_file_name):
         raise ValueError(
             "Dataset contains reserved SmartETL metadata columns."
         )
+
+    engine = get_engine()
 
     batch_id = str(uuid.uuid4())
     total_records = len(df)
